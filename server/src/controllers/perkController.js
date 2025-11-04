@@ -1,4 +1,5 @@
 import Joi from 'joi';
+import mongoose from 'mongoose';
 import { Perk } from '../models/Perk.js';
 
 // validation schema for creating/updating a perk
@@ -69,14 +70,42 @@ export async function getAllPerksPublic(req, res, next) {
       query.merchant = merchant.trim();
     }
     
-    // Fetch perks with the built query, populate creator info, and sort by newest first
+    // Fetch perks without populate first to check for invalid ObjectIds
     const perks = await Perk
       .find(query)
-      .populate('createdBy', 'name email') // Include creator information
       .sort({ createdAt: -1 })
       .lean();
 
-    res.json({ perks });
+    // Separate perks into those with valid ObjectIds and those without
+    const perksWithValidIds = [];
+    const perksWithInvalidIds = [];
+
+    for (const perk of perks) {
+      if (perk.createdBy && mongoose.Types.ObjectId.isValid(perk.createdBy)) {
+        perksWithValidIds.push(perk._id);
+      } else {
+        // Set createdBy to null for invalid ObjectIds
+        perksWithInvalidIds.push({ ...perk, createdBy: null });
+      }
+    }
+
+    // Populate only perks with valid ObjectIds
+    let populatedPerks = [];
+    if (perksWithValidIds.length > 0) {
+      populatedPerks = await Perk
+        .find({ _id: { $in: perksWithValidIds } })
+        .populate('createdBy', 'name email')
+        .sort({ createdAt: -1 })
+        .lean();
+    }
+
+    // Combine valid populated perks with invalid ones (with createdBy set to null)
+    const allPerks = [...populatedPerks, ...perksWithInvalidIds];
+    
+    // Sort by createdAt again since we combined arrays
+    allPerks.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    res.json({ perks: allPerks });
   } catch (err) {
     next(err);
   }

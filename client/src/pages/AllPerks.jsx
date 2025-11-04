@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 
@@ -21,14 +21,73 @@ export default function AllPerks() {
   
   const [error, setError] = useState('')
 
+  // Ref to track if component has mounted (prevents double loading on initial mount)
+  const isMounted = useRef(false)
+
   // ==================== SIDE EFFECTS WITH useEffect HOOK ====================
 
- /*
- TODO: HOOKS TO IMPLEMENT
- * useEffect Hook #1: Initial Data Loading
- * useEffect Hook #2: Auto-search on Input Change
+  // Define loadAllPerks function
+  async function loadAllPerks() {
+    // Reset error state before new request
+    setError('')
+    
+    // Show loading indicator
+    setLoading(true)
+    
+    try {
+      // Make GET request to /api/perks/all with query parameters
+      const params = {
+        // Only include search param if searchQuery is not empty
+        ...(searchQuery.trim() && { search: searchQuery.trim() }),
+        // Only include merchant param if merchantFilter is not empty
+        ...(merchantFilter.trim() && { merchant: merchantFilter.trim() })
+      }
+      
+      console.log('Loading perks with params:', params)
+      const res = await api.get('/perks/all', { params })
+      
+      console.log('Perks loaded:', res.data)
+      // Update perks state with response data
+      setPerks(res.data.perks || [])
+      
+    } catch (err) {
+      // Handle errors (network failure, server error, etc.)
+      console.error('Failed to load perks:', err)
+      const errorMessage = err?.response?.data?.message || err?.message || 'Failed to load perks. Make sure the server is running on port 4000.'
+      setError(errorMessage)
+      setPerks([]) // Clear perks on error
+      
+    } finally {
+      // This block runs whether try succeeds or catch handles error
+      // Always stop loading indicator
+      setLoading(false)
+    }
+  }
 
-*/
+  // useEffect Hook #1: Initial Data Loading
+  useEffect(() => {
+    // Load all perks when component first mounts
+    loadAllPerks()
+    // Mark as mounted after initial load
+    isMounted.current = true
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Empty dependency array - only run on mount
+
+  // useEffect Hook #2: Auto-search on Input Change (with debounce)
+  useEffect(() => {
+    // Skip auto-search on initial mount (initial load handles it)
+    if (!isMounted.current) return
+
+    // Set up debounce timer to wait 500ms after user stops typing
+    const debounceTimer = setTimeout(() => {
+      loadAllPerks()
+    }, 500)
+
+    // Cleanup: cancel the timer if searchQuery or merchantFilter changes again
+    // This ensures we only make the API call after user stops typing
+    return () => clearTimeout(debounceTimer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, merchantFilter]) // Re-run when search or filter changes
 
   
   useEffect(() => {
@@ -46,40 +105,6 @@ export default function AllPerks() {
     
     // This effect depends on [perks], so it re-runs whenever perks changes
   }, [perks]) // Dependency: re-run when perks array changes
-
-  
-  async function loadAllPerks() {
-    // Reset error state before new request
-    setError('')
-    
-    // Show loading indicator
-    setLoading(true)
-    
-    try {
-      // Make GET request to /api/perks/all with query parameters
-      const res = await api.get('/perks/all', {
-        params: {
-          // Only include search param if searchQuery is not empty
-          search: searchQuery.trim() || undefined,
-          // Only include merchant param if merchantFilter is not empty
-          merchant: merchantFilter.trim() || undefined
-        }
-      })
-      
-      // Update perks state with response data
-      setPerks(res.data.perks)
-      
-    } catch (err) {
-      // Handle errors (network failure, server error, etc.)
-      console.error('Failed to load perks:', err)
-      setError(err?.response?.data?.message || 'Failed to load perks')
-      
-    } finally {
-      // This block runs whether try succeeds or catch handles error
-      // Always stop loading indicator
-      setLoading(false)
-    }
-  }
 
   // ==================== EVENT HANDLERS ====================
 
@@ -105,11 +130,6 @@ export default function AllPerks() {
   
   
   return (
-    /*
-    TODO: HTML INPUT HANDLERS
- * Update state when user types in search box
- * update state when user selects filter
-    */
     <div className="max-w-6xl mx-auto space-y-6">
       
       {/* Page Title */}
@@ -136,7 +156,8 @@ export default function AllPerks() {
                 type="text"
                 className="input"
                 placeholder="Enter perk name..."
-                
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
               />
               <p className="text-xs text-zinc-500 mt-1">
                 Auto-searches as you type, or press Enter / click Search
@@ -151,7 +172,8 @@ export default function AllPerks() {
               </label>
               <select
                 className="input"
-                
+                value={merchantFilter}
+                onChange={(e) => setMerchantFilter(e.target.value)}
               >
                 <option value="">All Merchants</option>
                 
@@ -217,11 +239,11 @@ export default function AllPerks() {
           
           <Link
             key={perk._id}
-           
+            to={`/perks/${perk._id}/view`}
             className="card hover:shadow-lg transition-shadow cursor-pointer"
           >
-            {/* Perk Title */}
-            <div className="font-semibold text-lg text-zinc-900 mb-2">
+            {/* Perk Title (bold) */}
+            <div className="font-bold text-lg text-zinc-900 mb-2">
               {perk.title}
             </div>
 
@@ -241,12 +263,10 @@ export default function AllPerks() {
                 <span className="capitalize">{perk.category}</span>
               </div>
               
-              {perk.discountPercent > 0 && (
-                <div className="flex items-center gap-1 text-green-600 font-semibold">
-                  <span className="material-symbols-outlined text-xs">local_offer</span>
-                  {perk.discountPercent}% OFF
+              {/* Discount percentage above description */}
+              <div className="mt-2 text-green-600 font-semibold">
+                {(perk.discountPercent ?? 0)}% OFF
                 </div>
-              )}
             </div>
 
             {/* Description - truncated if too long */}
@@ -266,13 +286,23 @@ export default function AllPerks() {
         ))}
 
         
-        {perks.length === 0 && !loading && (
+        {perks.length === 0 && !loading && !error && (
           <div className="col-span-full text-center py-12 text-zinc-600">
             <span className="material-symbols-outlined text-5xl mb-4 block text-zinc-400">
               sentiment_dissatisfied
             </span>
             <p className="text-lg">No perks found.</p>
+            {searchQuery || merchantFilter ? (
             <p className="text-sm mt-2">Try adjusting your search or filters.</p>
+            ) : (
+              <div className="mt-4">
+                <p className="text-sm mb-4">The database is empty. Create your first perk!</p>
+                <Link to="/perks/new" className="btn bg-blue-600 text-white border-blue-600 hover:bg-blue-700 inline-flex items-center gap-2">
+                  <span className="material-symbols-outlined text-sm">add</span>
+                  Create Your First Perk
+                </Link>
+              </div>
+            )}
           </div>
         )}
 
